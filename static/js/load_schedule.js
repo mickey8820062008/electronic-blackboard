@@ -34,6 +34,7 @@ function load_schedule()
                 $('img#event_qrcode').css('display','none');
                 $('img#qrcode1').css('display','none');
                 $('img#qrcode2').css('display','none');
+                $('img#event_qrcode').css('display','none');
                 
                 console.log("text");
                 if ('preference' in jsonRes.file_text){
