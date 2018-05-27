@@ -24,6 +24,7 @@ import json
 import sys
 import config.settings as setting
 from display_object import *
+from random import randrange
 
 class loadScheduleError(Exception):
     def __init__(self,value):
@@ -184,14 +185,19 @@ def find_activity(json_obj):
     content_time = 5
     return_msg["target_id"] = []
     return_msg["display_time"] = []
+    now_time = time.time()
     for display_data in deal_obj:
         try:
             content_id = str(display_data[0])
             content_time = int(display_data[1])
+            end_time_str = "{date} {time}".format(date=str(display_data[2]),time=str(display_data[3]))
+            delta_time = \
+                (datetime.datetime.strptime("%Y-%m-%d %H:%M:%S") - now_time).total_seconds()
         except:
             continue
         return_msg["target_id"].append(content_id)
         return_msg["display_time"].append(content_time)
+        return_msg["delta_time"].append(delta_time)
 
     return_msg["result"] = "success"
     return return_msg
@@ -325,7 +331,67 @@ def add_schedule(json_obj):
         return_msg["error"] = gen_error_msg(e.args[1])
         return return_msg
 
+#The API connect mysql and add activity to schedule
+def add_schedule_by_duedate(json_obj):
+    try:
+        return_msg = {}
+        return_msg["result"] = "fail"
+        target_id_list = []
+        display_time_list = []
+        target_id = ""
+        display_time = 5
+        arrange_mode_sn = 1
+        try:
+            target_id_list = json_obj["target_id"]
+            display_time_list = json_obj["display_time"]
+            arrange_mode_sn = json_obj["arrange_sn"]
+            delta_time_list = json["delta_time"]
+        except:
+            return_msg["error"] = "input parameter missing"
+            return return_msg
+        # count tatoal delta time
+        sche_distribution = []
+        for i in delta_time_list:
+            # 43200 = 60*60*24*5, total seconds of 5 days
+            distribution = int(43200/int(i))
+            # give distribution an upper bound, prevent a schedule be selected
+            # a lot when it approach its end time
+            if distribution > 10:
+                distribution = 10
+            sche_distribution.append(distribution)
+        
+        sche_distribution_sum = sum(sche_distribution)+1
+        # insert into schedule database 10 data one tiem
+        for num0 in range(10):
+            # select schedule randomly by distribution
+            select_num = randrange(sche_distribution_sum)
+            sche_idx = 0
+            while select_num > 0 and sche_idx < len(sche_distribution):
+                select_num -= sche_distribution[sche_idx]
+                sche_idx += 1
+            # get schedule item and record it
+            target_id = target_id_list[sche_idx]
+            display_time = int(display_time_list[sche_idx])
+            #insert
+            with ScheduleDao() as scheduleDao:
+                scheduleDao.insertUndecidedSchedule(target_id,display_time,arrange_mode_sn)
+                sche_sn = scheduleDao.getUndecidedScheduleSn()
+            if sche_sn:
+                new_id = "sche" + "{0:010d}".format(int(sche_sn))
+                with ScheduleDao() as scheduleDao:
+                    scheduleDao.updateNewIdSchedule(new_id,sche_sn)
+            else :
+                return_msg["error"] = "may be another arrange.exe is working"
+                return return_msg
+
+        return_msg["result"] = "success"
+        return return_msg
+    except DB_Exception as e:
+        return_msg["error"] = gen_error_msg(e.args[1])
+        return return_msg
+
 #The API connect mysql and clean non used schedule
+#defined but not used
 def clean_schedule():
     try:
         return_msg = {}
@@ -996,7 +1062,7 @@ def auto_text_generator():
             existed = dataTypeDao.checkTypeExisted("文字")
         if not existed:
             create_data_type("文字")
-
+        
         #generate news text from db news_QR_code table
         with DataTypeDao() as dataTypeDao:
             existed = dataTypeDao.checkTypeExisted("新聞")
@@ -1249,9 +1315,11 @@ def main():
                     send_obj["sn_offset"] = 3
                     send_obj["target_id"] = receive_obj["target_id"]
                     send_obj["display_time"] = receive_obj["display_time"]
+                    send_obj["delta_time"] = receive_obj["delta_time"]
                     send_obj["arrange_sn"] = arrange_sn
                     if arrange_mode_change == 0:
-                        receive_obj = add_schedule(send_obj)
+                        #receive_obj = add_schedule(send_obj)
+                        receive_obj = add_schedule_by_duedate(send_obj)
                     else :
                         receive_obj = edit_schedule(send_obj)
                     if receive_obj["result"] == "success":
